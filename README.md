@@ -175,7 +175,12 @@ calls on first load - also cached for 30 minutes.
   A handful of Slack posters may also come back "unmatched" if their Slack
   name doesn't clearly map to exactly one roster agent (the app surfaces
   these rather than hiding them - see the expander under the daily chart).
-  One specific case worth a human check: the roster lists both `MICHELLE`
-  and `MITCH` as separate agent codes, and at least one Slack poster's name
-  matches both - that poster's Slack messages are excluded until someone
-  confirms which roster entry is really them.
+  One resolved case, kept here as an example: the roster lists both
+  `MICHELLE` and `MITCH` as separate agent codes, and the Slack account
+  matching both by name/email alone was genuinely ambiguous. Confirmed with
+  Weng - Slack's "Mitch" is roster's `MICHELLE`, and Slack's "Chelle" (which
+  already matched fine on its own) is roster's `MICHELL` - so `attendance.py`
+  has a small `MANUAL_EMAIL_OVERRIDES` table for exactly that one confirmed
+  case. If another poster ever comes back "unmatched" for the same kind of
+  reason, add them there the same way rather than loosening the general
+  matching rule.

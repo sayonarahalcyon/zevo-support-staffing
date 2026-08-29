@@ -112,6 +112,19 @@ def _fetch_channel_messages(token: str, channel_id: str, oldest_ts: float, lates
     return messages
 
 
+# The roster lists both MICHELLE and MITCH as distinct agent codes, and one
+# Slack account (display name "Mitch", email michelle@zevo.com) genuinely
+# matches both by the generic name/email matching in roster.match_agent - so
+# it comes back ambiguous (None) without help. Confirmed directly by Weng:
+# Slack's "Mitch" is roster's MICHELLE, and Slack's "Chelle" is roster's
+# MICHELL (that one already matched fine on its own, via the email
+# michell@zevo.com). This override is for that one specific, confirmed case -
+# it is not a general license to guess at other ambiguous matches.
+MANUAL_EMAIL_OVERRIDES = {
+    "michelle@zevo.com": "MICHELLE",
+}
+
+
 def _fetch_agent_map(token: str, user_ids: Iterable[str]) -> dict[str, str | None]:
     """user_id -> matched roster agent code (or None if it can't be matched to
     exactly one - see roster.match_agent)."""
@@ -123,6 +136,10 @@ def _fetch_agent_map(token: str, user_ids: Iterable[str]) -> dict[str, str | Non
         email = profile.get("email") or ""
         display_name = profile.get("display_name") or user.get("real_name") or ""
         real_name = profile.get("real_name") or ""
+
+        if email and email.lower() in MANUAL_EMAIL_OVERRIDES:
+            out[uid] = MANUAL_EMAIL_OVERRIDES[email.lower()]
+            continue
 
         candidates = list(display_name.split()) + list(real_name.split())
         if email:
