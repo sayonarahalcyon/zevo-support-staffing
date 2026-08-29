@@ -45,6 +45,26 @@ def _load() -> dict[tuple[str, int], RosterSlot]:
 
 _ROSTER = _load()
 
+# Every distinct agent code that appears anywhere in the roster - used to match
+# a Slack poster (see attendance.py) to a scheduled agent without hardcoding
+# any name/email mapping of our own.
+ALL_AGENT_CODES = frozenset(a for slot in _ROSTER.values() for a in slot.agents)
+
+
+def match_agent(candidates: list[str]) -> str | None:
+    """Given raw name/email fragments observed elsewhere (e.g. a Slack poster's
+    email local-part, display name, and real name, each split into words),
+    returns the one roster agent code they imply - or None if none of the
+    candidates match a code, or more than one *different* code is implied
+    (ambiguous). Never guesses: a poster who can't be matched this way is
+    treated as not a scheduled agent (e.g. a supervisor posting in the same
+    channel), not silently assigned to the nearest-sounding name.
+    """
+    hits = {c.strip().upper().rstrip(".,!") for c in candidates if c} & ALL_AGENT_CODES
+    if len(hits) == 1:
+        return next(iter(hits))
+    return None
+
 
 def scheduled_agents(local_dt) -> int:
     """local_dt: a timezone-aware datetime in America/Chicago (standard calendar day/hour)."""

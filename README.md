@@ -30,6 +30,14 @@ and gives a weekly/monthly trend view.
 - Conversations Fin (the AI agent) fully resolves without ever looping in a
   human are counted in total ticket volume but excluded from the SLA
   hit-rate, since they never needed agent capacity.
+- **Actual online agents (optional)** come live from Slack's `#secret-cc-cafe`
+  channel, where agents post to log in, go on break, come back, and log out.
+  This is shown *alongside* the planned roster, not instead of it - the gap
+  between "scheduled" and "actual" is itself useful (a no-show, a late start,
+  a missed logout). See `attendance.py`'s docstring for exactly how messages
+  are read and matched to a roster agent, and "Getting a Slack bot token"
+  below for setup. Entirely optional: without a Slack token configured, the
+  app runs exactly as before, just without this comparison.
 
 ## Files
 
@@ -37,13 +45,17 @@ and gives a weekly/monthly trend view.
 app.py              Streamlit UI (Daily staffing + Trends tabs)
 intercom_client.py  Talks to Intercom's REST API directly (needs its own token)
 pipeline.py         Turns raw conversations into an hourly ticket/SLA table
-roster.py           Loads the scheduled-agents lookup, handles the shift-day quirk
+roster.py           Loads the scheduled-agents lookup; also matches a Slack
+                     poster to a roster agent code (see attendance.py)
+attendance.py        Reads #secret-cc-cafe on Slack and reconstructs actual
+                     online/break time per agent per hour (optional data source)
 recommend.py        Capacity estimate + Increase/Sufficient/Decrease logic
 style.py            Shared chart colors
 data/roster_schedule.csv   Parsed roster (see "Updating the roster")
 requirements.txt
 .streamlit/secrets.toml.example
-smoke_test.py, apptest_check.py   Optional offline sanity checks (no real Intercom calls)
+smoke_test.py, apptest_check.py, attendance_smoke_test.py
+                     Optional offline sanity checks (no real Intercom/Slack calls)
 ```
 
 ## Running it locally first (optional but recommended)
@@ -68,6 +80,27 @@ internal app (or use an existing one), then under that app's
 and versions - if this path doesn't match what you see, search Intercom's own
 help docs for "access token" or ask whoever administers your Intercom
 workspace.)
+
+## Getting a Slack bot token (optional - only for "actual online" agents)
+
+Skip this if you don't want the actual-vs-scheduled comparison; the app works
+fine without it. To enable it:
+
+1. Go to [api.slack.com/apps](https://api.slack.com/apps) and create a new app
+   ("From scratch") in ZEVO's workspace.
+2. Under **OAuth & Permissions -> Scopes -> Bot Token Scopes**, add:
+   - `groups:history` (read message history in private channels - `#secret-cc-cafe`
+     is private)
+   - `users:read` (resolve a poster's display/real name)
+   - `users:read.email` (optional - helps match a couple of ambiguous names, see
+     `attendance.py`'s docstring; not required)
+3. Click **Install to Workspace**, then copy the **Bot User OAuth Token**
+   (starts with `xoxb-`).
+4. In Slack, go to `#secret-cc-cafe` and **invite the bot** you just created
+   (`/invite @your-bot-name`) - Slack won't let a bot read a private channel's
+   history until it's a member.
+5. Add `SLACK_BOT_TOKEN` (and, only if the channel ID ever changes,
+   `SLACK_CHANNEL_ID`) to Streamlit secrets - see `.streamlit/secrets.toml.example`.
 
 ## Deploying to Streamlit Community Cloud
 
@@ -95,6 +128,8 @@ workspace.)
 4. Before clicking Deploy, open **"Advanced settings" -> Secrets** and paste:
    ```toml
    INTERCOM_ACCESS_TOKEN = "paste-your-real-token-here"
+   # optional - only if you set up the Slack bot token above:
+   # SLACK_BOT_TOKEN = "paste-your-real-slack-bot-token-here"
    ```
 
 5. Click **Deploy**. First load will take a minute while it installs
@@ -117,16 +152,30 @@ This Intercom workspace has a large conversation history. Pulling 30-90 days
 of full conversation data can mean thousands of API calls and take a couple
 of minutes on first load (results are cached for 30 minutes after that,
 per date range). Start with "Last 7 days" if you just want a quick check.
+If Slack attendance is configured, that window also pulls the matching
+history from `#secret-cc-cafe`, which adds its own (smaller) round of API
+calls on first load - also cached for 30 minutes.
 
 ## Known limitations / things worth revisiting
 
 - "Scheduled agents" is a planned roster, not proof anyone was actually
-  online - it can't account for call-outs, no-shows, or overtime.
+  online - it can't account for call-outs, no-shows, or overtime. That's
+  exactly what the optional Slack-based "actual online" series is for; see
+  above.
 - The capacity estimate is a statistical heuristic over whatever window is
   currently loaded; it will shift as more data comes in, and can look strange
   with very little history (that's what the "(default, low data)" label
-  means).
-- If ZEVO later wants "agents per hour" to mean actual admin activity
-  (who really replied that hour) rather than the schedule, that's also
-  derivable from Intercom (via each conversation's assignee/teammates) and
-  can be added as a second series alongside the roster-based one.
+  means). It's still based on the *planned* roster, not actual attendance -
+  worth revisiting once there's enough Slack history to consider basing it
+  on actual instead.
+- The Slack-based attendance parser is keyword-based (see `attendance.py`'s
+  docstring for the exact phrases) - it was checked against real channel
+  history, but a genuinely new phrasing, a missed "back" after a "break", or
+  someone forgetting to log out will show up as a gap rather than a guess.
+  A handful of Slack posters may also come back "unmatched" if their Slack
+  name doesn't clearly map to exactly one roster agent (the app surfaces
+  these rather than hiding them - see the expander under the daily chart).
+  One specific case worth a human check: the roster lists both `MICHELLE`
+  and `MITCH` as separate agent codes, and at least one Slack poster's name
+  matches both - that poster's Slack messages are excluded until someone
+  confirms which roster entry is really them.
