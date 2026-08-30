@@ -184,3 +184,9 @@ calls on first load - also cached for 30 minutes.
   case. If another poster ever comes back "unmatched" for the same kind of
   reason, add them there the same way rather than loosening the general
   matching rule.
+- Two posters (Weng and Kristine) no longer take tickets, so their
+  login/break/back/logout pings in `#secret-cc-cafe` are deliberately
+  excluded from "actual online" - see `EXCLUDED_EMAILS` in `attendance.py`.
+  They're excluded rather than treated as "unmatched" since there's no
+  naming mismatch to flag. If anyone else stops taking tickets but keeps
+  posting in the channel, add them there the same way.

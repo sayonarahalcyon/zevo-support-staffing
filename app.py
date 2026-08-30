@@ -166,8 +166,10 @@ with tab_daily:
                                              line=dict(color=style.SERIES_ACTUAL), name="Actual online (Slack)"))
         fig_agents.add_trace(go.Scatter(x=df["hour_label"], y=df["required_agents"], mode="lines+markers",
                                          line=dict(color=style.TEXT_SECONDARY, dash="dot"), name="Agents needed"))
-        fig_agents.update_layout(title="Scheduled vs. actual vs. needed agents per hour", height=280,
-                                  margin=dict(t=40, b=10), plot_bgcolor="white", legend=dict(orientation="h", y=1.15))
+        fig_agents.update_layout(
+            title=dict(text="Scheduled vs. actual vs. needed agents per hour", y=0.97, yanchor="top"),
+            height=300, margin=dict(t=90, b=10), plot_bgcolor="white",
+            legend=dict(orientation="h", y=1.1, yanchor="bottom", x=0.5, xanchor="center"))
         st.plotly_chart(fig_agents, width="stretch")
 
         rec_colors = df["recommendation"].map(style.RECOMMENDATION_COLORS)
@@ -255,9 +257,10 @@ with tab_trends:
                                   name="Avg. scheduled")
             fig_staffing.add_trace(go.Scatter(x=daily["date"], y=daily["avg_actual"], mode="lines+markers",
                                                line=dict(color=style.SERIES_ACTUAL), name="Avg. actual online"))
-            fig_staffing.update_layout(title="Daily avg. scheduled vs. actual online agents", height=260,
-                                        margin=dict(t=40, b=10), plot_bgcolor="white",
-                                        legend=dict(orientation="h", y=1.15))
+            fig_staffing.update_layout(
+                title=dict(text="Daily avg. scheduled vs. actual online agents", y=0.97, yanchor="top"),
+                height=280, margin=dict(t=90, b=10), plot_bgcolor="white",
+                legend=dict(orientation="h", y=1.1, yanchor="bottom", x=0.5, xanchor="center"))
             st.plotly_chart(fig_staffing, width="stretch")
 
         st.subheader("Average ticket volume by day-of-week / hour")

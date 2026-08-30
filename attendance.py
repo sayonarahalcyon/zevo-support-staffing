@@ -19,6 +19,11 @@ every message they post, and surfaced in this module's returned meta dict as
 same channel but aren't a scheduled agent (e.g. a supervisor saying good
 morning), as well as any real mismatch worth someone's attention.
 
+A separate, deliberate case: EXCLUDED_EMAILS below lists posters who still
+post in the channel but no longer take tickets (confirmed by Weng) - their
+messages are skipped the same way, but they're not shown as "unmatched"
+since there's no mismatch to flag.
+
 This runs on Streamlit Cloud, separate from any Claude/MCP session, so it
 authenticates with its own Slack bot token (read from Streamlit secrets or an
 environment variable) and talks to Slack's Web API directly. The bot needs:
@@ -124,11 +129,26 @@ MANUAL_EMAIL_OVERRIDES = {
     "michelle@zevo.com": "MICHELLE",
 }
 
+# These posters are intentionally excluded from "actual online" - they no
+# longer take tickets (confirmed by Weng), so their login/break/back/logout
+# pings in #secret-cc-cafe shouldn't count as agent coverage even though they
+# still post in the channel. Excluded, not "unmatched" - they aren't a naming
+# mismatch, so they don't show up in the app's unmatched-poster expander.
+EXCLUDED_EMAILS = {
+    "weng@zevo.com",
+    "kristine@zevo.com",
+}
 
-def _fetch_agent_map(token: str, user_ids: Iterable[str]) -> dict[str, str | None]:
-    """user_id -> matched roster agent code (or None if it can't be matched to
-    exactly one - see roster.match_agent)."""
+
+def _fetch_agent_map(token: str, user_ids: Iterable[str]) -> tuple[dict[str, str | None], set[str]]:
+    """Returns (user_id -> matched roster agent code (or None if it can't be
+    matched to exactly one - see roster.match_agent), excluded_user_ids).
+
+    excluded_user_ids are posters in EXCLUDED_EMAILS - they map to None (not
+    counted) but are kept separate from a genuine no-match so the app doesn't
+    surface them as "unmatched"."""
     out: dict[str, str | None] = {}
+    excluded: set[str] = set()
     for uid in user_ids:
         data = _call(token, "users.info", {"user": uid})
         user = data.get("user") or {}
@@ -136,6 +156,11 @@ def _fetch_agent_map(token: str, user_ids: Iterable[str]) -> dict[str, str | Non
         email = profile.get("email") or ""
         display_name = profile.get("display_name") or user.get("real_name") or ""
         real_name = profile.get("real_name") or ""
+
+        if email and email.lower() in EXCLUDED_EMAILS:
+            out[uid] = None
+            excluded.add(uid)
+            continue
 
         if email and email.lower() in MANUAL_EMAIL_OVERRIDES:
             out[uid] = MANUAL_EMAIL_OVERRIDES[email.lower()]
@@ -145,7 +170,7 @@ def _fetch_agent_map(token: str, user_ids: Iterable[str]) -> dict[str, str | Non
         if email:
             candidates.append(email.split("@")[0])
         out[uid] = roster.match_agent(candidates)
-    return out
+    return out, excluded
 
 
 def fetch_actual_online_table(
@@ -169,8 +194,10 @@ def fetch_actual_online_table(
     raw = _fetch_channel_messages(token, channel_id, oldest.timestamp(), end_utc.timestamp())
 
     user_ids = sorted({m["user"] for m in raw if m.get("user")})
-    agent_map = _fetch_agent_map(token, user_ids)
-    unmatched_users = sorted({uid for uid in user_ids if agent_map.get(uid) is None})
+    agent_map, excluded_users = _fetch_agent_map(token, user_ids)
+    unmatched_users = sorted({
+        uid for uid in user_ids if agent_map.get(uid) is None and uid not in excluded_users
+    })
 
     per_agent: dict[str, list[tuple[float, str]]] = defaultdict(list)
     for m in raw:
