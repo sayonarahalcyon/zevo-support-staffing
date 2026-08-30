@@ -22,22 +22,33 @@ and gives a weekly/monthly trend view.
   timezone - worth double-checking with whoever maintains that sheet.
 - **"Sufficient / Increase / Decrease"** is a heuristic, not a fact: it
   estimates a sustainable "tickets per agent per hour" capacity from hours in
-  the loaded window that already met the SLA target, then compares each hour's
-  scheduled agents to how many that estimate says are needed. With little
-  history it falls back to a flat default (4 tickets/agent/hour) and says so
-  in the UI. Treat the recommendation as a starting point for a conversation,
-  not an automatic staffing decision.
+  the loaded window that already met the SLA target, then compares each
+  hour's *effective* agent count (see below) to how many that estimate says
+  are needed. With little history it falls back to a flat default (4
+  tickets/agent/hour) and says so in the UI. Treat the recommendation as a
+  starting point for a conversation, not an automatic staffing decision.
 - Conversations Fin (the AI agent) fully resolves without ever looping in a
   human are counted in total ticket volume but excluded from the SLA
   hit-rate, since they never needed agent capacity.
 - **Actual online agents (optional)** come live from Slack's `#secret-cc-cafe`
   channel, where agents post to log in, go on break, come back, and log out.
-  This is shown *alongside* the planned roster, not instead of it - the gap
-  between "scheduled" and "actual" is itself useful (a no-show, a late start,
-  a missed logout). See `attendance.py`'s docstring for exactly how messages
-  are read and matched to a roster agent, and "Getting a Slack bot token"
-  below for setup. Entirely optional: without a Slack token configured, the
-  app runs exactly as before, just without this comparison.
+  See `attendance.py`'s docstring for exactly how messages are read and
+  matched to a roster agent, and "Getting a Slack bot token" below for setup.
+  Entirely optional: without a Slack token configured, the app runs exactly
+  as before, using the roster for every staffing decision.
+- **Which one drives staffing decisions:** confirmed with Weng - the roster
+  sheet isn't updated daily and misses leave, no-shows, and someone covering
+  an off day, so it's the fallback, not the primary source, whenever Slack
+  has better information. Concretely: for every hour, `effective_agents` is
+  the actual-online headcount from Slack if that hour has Slack data, and
+  the scheduled roster only for hours Slack has no data for (bot not
+  configured, or nobody posted). The recommendation, "Hours understaffed",
+  and the capacity estimate are all based on `effective_agents` - never the
+  roster alone once Slack is configured. The roster is still shown on its
+  own (the green bars, the "Scheduled" column) since the plan-vs-reality gap
+  is itself useful, but it's a comparison now, not the basis for the
+  recommendation. The hour-by-hour table's **"Effective (basis)"** column
+  shows exactly which number was used for each hour.
 
 ## Files
 
@@ -54,7 +65,7 @@ style.py            Shared chart colors
 data/roster_schedule.csv   Parsed roster (see "Updating the roster")
 requirements.txt
 .streamlit/secrets.toml.example
-smoke_test.py, apptest_check.py, attendance_smoke_test.py
+smoke_test.py, apptest_check.py, attendance_smoke_test.py, recommend_test.py
                      Optional offline sanity checks (no real Intercom/Slack calls)
 ```
 
@@ -159,15 +170,23 @@ calls on first load - also cached for 30 minutes.
 ## Known limitations / things worth revisiting
 
 - "Scheduled agents" is a planned roster, not proof anyone was actually
-  online - it can't account for call-outs, no-shows, or overtime. That's
-  exactly what the optional Slack-based "actual online" series is for; see
-  above.
+  online - it can't account for call-outs, no-shows, or overtime. Once Slack
+  is configured, that's exactly why staffing decisions are based on actual
+  online agents rather than the roster - see "Which one drives staffing
+  decisions" above.
 - The capacity estimate is a statistical heuristic over whatever window is
   currently loaded; it will shift as more data comes in, and can look strange
   with very little history (that's what the "(default, low data)" label
-  means). It's still based on the *planned* roster, not actual attendance -
-  worth revisiting once there's enough Slack history to consider basing it
-  on actual instead.
+  means). It's based on `effective_agents` (actual online where Slack has it,
+  roster otherwise), so a day with little or no Slack history for a stretch
+  of hours falls back to the roster for that stretch, same as before Slack
+  was added.
+- Slack's history for `#secret-cc-cafe` only goes back as far as the channel
+  itself (and further back than that, the bot wasn't invited yet). An hour
+  from before the channel was in regular use will have no Slack messages at
+  all, which reads as "no Slack data for that hour" and falls back to the
+  roster - not as "zero agents online". If a specific hour looks wrong,
+  check whether the channel actually had traffic then.
 - The Slack-based attendance parser is keyword-based (see `attendance.py`'s
   docstring for the exact phrases) - it was checked against real channel
   history, but a genuinely new phrasing, a missed "back" after a "break", or

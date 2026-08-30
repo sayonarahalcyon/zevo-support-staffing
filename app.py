@@ -93,7 +93,10 @@ sla_target_rate = st.sidebar.slider("Minimum acceptable SLA hit-rate", 0.5, 1.0,
 st.sidebar.caption(
     "'Scheduled agents' comes from the ZEVO Workforce roster (recurring weekly template), "
     "not real-time clock-ins. 'Actual online' (when configured) is reconstructed from Slack "
-    "login/break/back/logout messages. Ticket data is live from Intercom."
+    "login/break/back/logout messages. Ticket data is live from Intercom. Staffing "
+    "recommendations and 'hours understaffed' are based on actual online agents for any "
+    "hour Slack has data for, and fall back to the roster only when it doesn't - the "
+    "roster isn't updated daily and misses leave, no-shows, and off-day coverage."
 )
 
 
@@ -129,7 +132,6 @@ with tab_daily:
     if df.empty:
         st.info("No data for this date.")
     else:
-        df, meta = add_recommendations(df, sla_target=sla_target_rate)
         df["hour_label"] = df["hour"].dt.strftime("%-I %p")
 
         adf, unmatched = load_actual_safe(start_utc, end_utc)
@@ -137,6 +139,14 @@ with tab_daily:
             df = df.merge(adf[["hour", "actual_online"]], on="hour", how="left")
         else:
             df["actual_online"] = pd.NA
+
+        # Actual online (Slack) is the primary basis for headcount when we have
+        # it for an hour - the roster is a template that doesn't get updated
+        # daily and misses leave, no-shows, or someone covering an off day.
+        # Falls back to the roster only for hours with no Slack data at all.
+        df["effective_agents"] = df["actual_online"].where(df["actual_online"].notna(), df["scheduled_agents"])
+        df, meta = add_recommendations(df, sla_target=sla_target_rate)
+
         if unmatched:
             with st.expander(f"{len(unmatched)} Slack poster(s) in #secret-cc-cafe couldn't be matched to a roster agent"):
                 st.write(
@@ -149,7 +159,9 @@ with tab_daily:
         c1.metric("Tickets", int(df["tickets"].sum()))
         overall_hit = df["sla_met"].sum() / df["human_handled"].sum() if df["human_handled"].sum() else None
         c2.metric("SLA hit-rate", f"{overall_hit:.0%}" if overall_hit is not None else "n/a")
-        c3.metric("Hours understaffed", int((df["recommendation"] == "Increase").sum()))
+        c3.metric("Hours understaffed", int((df["recommendation"] == "Increase").sum()),
+                  help="Based on actual online agents (Slack) for hours that have that data, "
+                       "the scheduled roster otherwise.")
         c4.metric("Est. capacity/agent/hr", f"{meta['capacity_tickets_per_agent']:.1f}"
                    + ("" if meta["capacity_estimated_from_data"] else " (default, low data)"))
 
@@ -171,6 +183,11 @@ with tab_daily:
             height=300, margin=dict(t=90, b=10), plot_bgcolor="white",
             legend=dict(orientation="h", y=1.1, yanchor="bottom", x=0.5, xanchor="center"))
         st.plotly_chart(fig_agents, width="stretch")
+        if df["actual_online"].notna().any():
+            st.caption(
+                "The recommendation strip below judges each hour against actual online agents "
+                "(Slack) where available, and the scheduled roster for any hour Slack has no data for."
+            )
 
         rec_colors = df["recommendation"].map(style.RECOMMENDATION_COLORS)
         fig_rec = go.Figure()
@@ -181,14 +198,19 @@ with tab_daily:
         st.plotly_chart(fig_rec, width="stretch")
 
         st.subheader("Hour-by-hour detail")
-        show = df[["hour_label", "tickets", "scheduled_agents", "actual_online", "required_agents", "agent_gap",
-                    "sla_hit_rate", "recommendation"]].rename(columns={
+        show = df[["hour_label", "tickets", "scheduled_agents", "actual_online", "effective_agents",
+                    "required_agents", "agent_gap", "sla_hit_rate", "recommendation"]].rename(columns={
             "hour_label": "Hour", "tickets": "Tickets", "scheduled_agents": "Scheduled",
-            "actual_online": "Actual (Slack)", "required_agents": "Needed", "agent_gap": "Gap",
+            "actual_online": "Actual (Slack)", "effective_agents": "Effective (basis)",
+            "required_agents": "Needed", "agent_gap": "Gap",
             "sla_hit_rate": "SLA hit-rate", "recommendation": "Recommendation",
         })
         show["SLA hit-rate"] = show["SLA hit-rate"].map(lambda x: f"{x:.0%}" if pd.notna(x) else "–")
         st.dataframe(show, width="stretch", hide_index=True)
+        st.caption(
+            "'Effective (basis)' is whichever number the recommendation actually used for that "
+            "hour: actual online when Slack has it, the scheduled roster when it doesn't."
+        )
 
 # ------------------------------------------------------------ trends tab --
 with tab_trends:
@@ -210,7 +232,6 @@ with tab_trends:
     if tdf.empty:
         st.info("No data in this window.")
     else:
-        tdf, tmeta = add_recommendations(tdf, sla_target=sla_target_rate)
         tdf["date"] = tdf["hour"].dt.date
         tdf["day_name"] = tdf["hour"].dt.strftime("%A")
         tdf["hour_of_day"] = tdf["hour"].dt.hour
@@ -220,6 +241,11 @@ with tab_trends:
             tdf = tdf.merge(tadf[["hour", "actual_online"]], on="hour", how="left")
         else:
             tdf["actual_online"] = pd.NA
+
+        # Same precedence as the daily tab: actual online (Slack) drives the
+        # recommendation when we have it for an hour, roster otherwise.
+        tdf["effective_agents"] = tdf["actual_online"].where(tdf["actual_online"].notna(), tdf["scheduled_agents"])
+        tdf, tmeta = add_recommendations(tdf, sla_target=sla_target_rate)
 
         daily = tdf.groupby("date").agg(
             tickets=("tickets", "sum"),
@@ -250,6 +276,11 @@ with tab_trends:
         fig_under.update_layout(title="Understaffed hours per day", height=240, margin=dict(t=40, b=10),
                                  plot_bgcolor="white")
         st.plotly_chart(fig_under, width="stretch")
+        if tdf["actual_online"].notna().any():
+            st.caption(
+                "Counts hours judged against actual online agents (Slack) where available, "
+                "the scheduled roster otherwise - same basis as the Daily staffing tab."
+            )
 
         if daily["avg_actual"].notna().any():
             fig_staffing = go.Figure()
