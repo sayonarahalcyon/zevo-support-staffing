@@ -216,11 +216,40 @@ with tab_daily:
 with tab_trends:
     if not token:
         st.stop()
-    window = st.radio("Window", ["Last 7 days", "Last 30 days", "Last 90 days"], horizontal=True, index=1)
-    days = {"Last 7 days": 7, "Last 30 days": 30, "Last 90 days": 90}[window]
+    window = st.radio("Window", ["Last 7 days", "Last 30 days", "Last 90 days", "Custom range"],
+                       horizontal=True, index=1)
 
-    end_local = datetime.now(LOCAL_TZ).replace(minute=0, second=0, microsecond=0)
-    start_local = end_local - timedelta(days=days)
+    today_local = datetime.now(LOCAL_TZ).date()
+    if window == "Custom range":
+        picked_range = st.date_input(
+            "Pick a start and end date (inclusive) - use the same date twice for a single day",
+            value=(today_local - timedelta(days=29), today_local),
+            max_value=today_local,
+        )
+        # Streamlit returns a single date while the user has only picked one
+        # end of the range yet - fall back to that same date for both ends
+        # until the second click lands, rather than erroring.
+        if isinstance(picked_range, tuple) and len(picked_range) == 2:
+            range_start, range_end = picked_range
+        elif isinstance(picked_range, tuple) and len(picked_range) == 1:
+            range_start = range_end = picked_range[0]
+        else:
+            range_start = range_end = picked_range
+        if range_start > range_end:
+            range_start, range_end = range_end, range_start
+
+        start_local = datetime.combine(range_start, dtime.min, tzinfo=LOCAL_TZ)
+        end_local = datetime.combine(range_end, dtime.min, tzinfo=LOCAL_TZ) + timedelta(days=1)
+        span_days = (range_end - range_start).days + 1
+        st.caption(
+            f"{span_days} day{'s' if span_days != 1 else ''}: {range_start.strftime('%b %-d, %Y')} "
+            f"– {range_end.strftime('%b %-d, %Y')} (America/Chicago, inclusive)."
+        )
+    else:
+        days = {"Last 7 days": 7, "Last 30 days": 30, "Last 90 days": 90}[window]
+        end_local = datetime.now(LOCAL_TZ).replace(minute=0, second=0, microsecond=0)
+        start_local = end_local - timedelta(days=days)
+
     start_utc, end_utc = start_local.astimezone(ZoneInfo("UTC")), end_local.astimezone(ZoneInfo("UTC"))
 
     try:
