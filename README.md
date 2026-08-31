@@ -65,7 +65,8 @@ style.py            Shared chart colors
 data/roster_schedule.csv   Parsed roster (see "Updating the roster")
 requirements.txt
 .streamlit/secrets.toml.example
-smoke_test.py, apptest_check.py, attendance_smoke_test.py, recommend_test.py
+smoke_test.py, apptest_check.py, attendance_smoke_test.py, recommend_test.py,
+apptest_custom_range_check.py
                      Optional offline sanity checks (no real Intercom/Slack calls)
 ```
 
@@ -166,6 +167,13 @@ per date range). Start with "Last 7 days" if you just want a quick check.
 If Slack attendance is configured, that window also pulls the matching
 history from `#secret-cc-cafe`, which adds its own (smaller) round of API
 calls on first load - also cached for 30 minutes.
+
+Besides the "Last 7/30/90 days" presets, the "Window" control also has a
+**Custom range** option: pick any start and end date (inclusive), including
+the same date twice for a single specific day. It's built from the same
+`fetch_hourly_table`/Slack calls as the presets, so the same caching and
+"wider range = slower first load" notes above apply - a multi-month custom
+range will be slow on first load just like a 90-day preset would be.
 
 ## Known limitations / things worth revisiting
 
