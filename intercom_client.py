@@ -75,3 +75,33 @@ def search_conversations(token: str, created_after: int, created_before: int) ->
         if not next_page or not next_page.get("starting_after"):
             break
         starting_after = next_page["starting_after"]
+
+
+def get_conversation(token: str, conversation_id: str) -> dict:
+    """Fetch one conversation's full detail, including its conversation_parts
+    thread (every reply, note, and status change, each with its own
+    created_at and author).
+
+    This is a different endpoint from search_conversations above ("Retrieve a
+    conversation", not "Search conversations") - the search endpoint only
+    returns a summary plus aggregate `statistics` fields (like
+    first_admin_reply_at), never the parts themselves. Computing per-hour
+    "worked on"/"closed" activity needs the parts, so it costs one extra GET
+    per conversation on top of the search call.
+
+    Docs: https://developers.intercom.com/docs/references/rest-api/api.intercom.io/conversations/retrieveconversation
+    """
+    resp = None
+    for attempt in range(MAX_RETRIES):
+        resp = requests.get(f"{API_BASE}/conversations/{conversation_id}", headers=_headers(token), timeout=30)
+        if resp.status_code == 429:
+            time.sleep(2 ** attempt)
+            continue
+        break
+
+    if resp.status_code in (401, 403):
+        raise IntercomAuthError(
+            "Intercom rejected the access token (401/403). Check the INTERCOM_ACCESS_TOKEN secret."
+        )
+    resp.raise_for_status()
+    return resp.json()

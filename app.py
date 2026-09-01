@@ -26,7 +26,7 @@ import roster
 import style
 from attendance import SlackAuthError
 from intercom_client import IntercomAuthError
-from pipeline import fetch_hourly_table
+from pipeline import fetch_hourly_table, fetch_hourly_ticket_activity
 from recommend import add_recommendations
 
 LOCAL_TZ = ZoneInfo("America/Chicago")
@@ -62,6 +62,11 @@ def load_hourly(token: str, start_utc: datetime, end_utc: datetime, sla_seconds:
 @st.cache_data(ttl=1800, show_spinner="Reading #secret-cc-cafe on Slack...")
 def load_actual(token: str, channel_id: str, start_utc: datetime, end_utc: datetime):
     return attendance.fetch_actual_online_table(token, channel_id, start_utc, end_utc)
+
+
+@st.cache_data(ttl=1800, show_spinner="Pulling per-ticket work history from Intercom...")
+def load_ticket_activity(token: str, start_utc: datetime, end_utc: datetime) -> pd.DataFrame:
+    return fetch_hourly_ticket_activity(token, start_utc, end_utc)
 
 
 def local_day_bounds_utc(local_date) -> tuple[datetime, datetime]:
@@ -112,6 +117,21 @@ def load_actual_safe(start_utc: datetime, end_utc: datetime):
     except SlackAuthError as e:
         st.sidebar.warning(f"Slack attendance error: {e}")
         return None, []
+
+
+def load_ticket_activity_safe(start_utc: datetime, end_utc: datetime):
+    """Returns a per-hour created/worked_on/closed DataFrame, or None if it
+    couldn't be loaded. This does one Intercom GET per ticket created in the
+    window - much heavier than everything else on this tab - so a hiccup
+    here shouldn't take down the cheaper, more important data above it."""
+    try:
+        return load_ticket_activity(token, start_utc, end_utc)
+    except IntercomAuthError as e:
+        st.sidebar.warning(f"Ticket work-history error: {e}")
+        return None
+    except Exception as e:
+        st.warning(f"Couldn't load per-ticket work history (Created/Worked on/Closed columns): {e}")
+        return None
 
 st.title("Support Staffing Dashboard")
 tab_daily, tab_trends = st.tabs(["Daily staffing", "Trends"])
@@ -197,17 +217,32 @@ with tab_daily:
                                plot_bgcolor="white", showlegend=False, yaxis=dict(visible=False))
         st.plotly_chart(fig_rec, width="stretch")
 
+        activity_df = load_ticket_activity_safe(start_utc, end_utc)
+        if activity_df is not None and not activity_df.empty:
+            df = df.merge(activity_df[["hour", "worked_on", "closed"]], on="hour", how="left")
+        else:
+            df["worked_on"] = pd.NA
+            df["closed"] = pd.NA
+
         st.subheader("Hour-by-hour detail")
-        show = df[["hour_label", "tickets", "scheduled_agents", "actual_online", "effective_agents",
-                    "required_agents", "agent_gap", "sla_hit_rate", "recommendation"]].rename(columns={
-            "hour_label": "Hour", "tickets": "Tickets", "scheduled_agents": "Scheduled",
+        show = df[["hour_label", "tickets", "worked_on", "closed", "scheduled_agents", "actual_online",
+                    "effective_agents", "required_agents", "agent_gap", "sla_hit_rate", "recommendation"]].rename(columns={
+            "hour_label": "Hour", "tickets": "Created", "worked_on": "Worked on", "closed": "Closed",
+            "scheduled_agents": "Scheduled",
             "actual_online": "Actual (Slack)", "effective_agents": "Effective (basis)",
             "required_agents": "Needed", "agent_gap": "Gap",
             "sla_hit_rate": "SLA hit-rate", "recommendation": "Recommendation",
         })
+        show["Worked on"] = show["Worked on"].map(lambda x: int(x) if pd.notna(x) else "–")
+        show["Closed"] = show["Closed"].map(lambda x: int(x) if pd.notna(x) else "–")
         show["SLA hit-rate"] = show["SLA hit-rate"].map(lambda x: f"{x:.0%}" if pd.notna(x) else "–")
         st.dataframe(show, width="stretch", hide_index=True)
         st.caption(
+            "'Created' is tickets that came in during that hour. 'Worked on' counts tickets "
+            "created on this same day that got a reply from a human agent (not Fin AI) during "
+            "that hour; 'Closed' counts ones marked closed during that hour, by an agent or "
+            "automatically. Both only cover tickets created within the selected day - work done "
+            "that hour on a ticket created on an earlier day won't show up here. "
             "'Effective (basis)' is whichever number the recommendation actually used for that "
             "hour: actual online when Slack has it, the scheduled roster when it doesn't."
         )

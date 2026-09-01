@@ -36,6 +36,25 @@ and gives a weekly/monthly trend view.
   matched to a roster agent, and "Getting a Slack bot token" below for setup.
   Entirely optional: without a Slack token configured, the app runs exactly
   as before, using the roster for every staffing decision.
+- **Created / Worked on / Closed (Daily tab's hour-by-hour table)**: "Created"
+  is the same ticket-volume number as the chart above it, just renamed in
+  this one table. "Worked on" counts tickets, created that same day, that
+  got a conversation part authored by a human admin (not Fin AI) landing in
+  that hour; "Closed" counts ones with a part marked as a close landing in
+  that hour (an agent's own close action or Intercom's auto-close both
+  count). An admin's close action counts toward *both* columns for that
+  hour, since closing a ticket is itself a human action. **Scoping limit:**
+  both columns only look at tickets *created within the selected day* - if
+  someone works on or closes, this hour, a ticket that was created on an
+  earlier day, that action won't show up anywhere in this table. This keeps
+  the added Intercom cost bounded (one extra API call per ticket created
+  that day, since - unlike ticket volume - "worked on"/"closed" needs each
+  conversation's full reply history, which only Intercom's "retrieve a
+  conversation" endpoint returns, not the search endpoint the rest of this
+  app uses). Loaded and cached separately from the rest of the Daily tab, so
+  a hiccup fetching it doesn't take down the other numbers. Not available on
+  the Trends tab - doing this per-ticket fetch over a 30/90-day window would
+  mean thousands of extra API calls.
 - **Which one drives staffing decisions:** confirmed with Weng - the roster
   sheet isn't updated daily and misses leave, no-shows, and someone covering
   an off day, so it's the fallback, not the primary source, whenever Slack
@@ -66,7 +85,7 @@ data/roster_schedule.csv   Parsed roster (see "Updating the roster")
 requirements.txt
 .streamlit/secrets.toml.example
 smoke_test.py, apptest_check.py, attendance_smoke_test.py, recommend_test.py,
-apptest_custom_range_check.py
+apptest_custom_range_check.py, ticket_activity_test.py
                      Optional offline sanity checks (no real Intercom/Slack calls)
 ```
 
@@ -211,6 +230,12 @@ range will be slow on first load just like a 90-day preset would be.
   case. If another poster ever comes back "unmatched" for the same kind of
   reason, add them there the same way rather than loosening the general
   matching rule.
+- "Worked on" and "Closed" (Daily tab) only count activity on tickets created
+  that same day - a ticket created yesterday and closed today won't be
+  reflected in either column today (or, for that matter, in yesterday's
+  table once that day's window has passed). If a day looks like it has
+  "leftover" tickets that never show as worked on/closed, this is why - see
+  "Created / Worked on / Closed" above.
 - Two posters (Weng and Kristine) no longer take tickets, so their
   login/break/back/logout pings in `#secret-cc-cafe` are deliberately
   excluded from "actual online" - see `EXCLUDED_EMAILS` in `attendance.py`.
