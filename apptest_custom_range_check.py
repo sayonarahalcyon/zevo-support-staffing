@@ -108,4 +108,18 @@ one_day = TODAY_LOCAL - timedelta(days=2)
 di.set_value((one_day, one_day)).run()
 assert not at.exception, f"Single-day custom range raised: {list(at.exception)}"
 
+# Edge case: the Daily tab's own date picker happens to be set to the exact
+# same date as Trends' "Yesterday" - both render_daily_view() calls run in
+# the same script pass regardless of which tab is visually active, so this
+# checks their chart/table keys don't collide when the dates match.
+yesterday = TODAY_LOCAL - timedelta(days=1)
+date_inputs = [d for d in at.date_input if d.label == "Date"]
+assert date_inputs, "Could not find the Daily tab's 'Date' input"
+date_inputs[0].set_value(yesterday).run()
+assert not at.exception, f"Setting Daily tab to yesterday raised: {list(at.exception)}"
+window_radio.set_value("Yesterday").run()
+assert not at.exception, (
+    f"Daily tab date == Trends 'Yesterday' date raised: {list(at.exception)}"
+)
+
 print("APPTEST OK - custom range (multi-day and single-day) both render without error")
