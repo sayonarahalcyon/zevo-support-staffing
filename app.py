@@ -185,6 +185,33 @@ with tab_daily:
         c4.metric("Est. capacity/agent/hr", f"{meta['capacity_tickets_per_agent']:.1f}"
                    + ("" if meta["capacity_estimated_from_data"] else " (default, low data)"))
 
+        if overall_hit is not None:
+            with st.expander(f"What does {overall_hit:.0%} SLA hit-rate mean?"):
+                human_handled_total = int(df["human_handled"].sum())
+                sla_met_total = int(df["sla_met"].sum())
+                st.write(
+                    f"Of the **{human_handled_total} tickets today that needed a human reply** "
+                    f"(Fin AI resolutions that never needed one aren't counted), "
+                    f"**{sla_met_total}** got that first reply within your "
+                    f"**{int(sla_minutes)}-minute** target - that's the {overall_hit:.0%} above."
+                )
+                verdict = "at or above" if overall_hit >= sla_target_rate else "below"
+                st.write(
+                    f"Your **Minimum acceptable SLA hit-rate** slider (sidebar) is set to "
+                    f"**{sla_target_rate:.0%}** - today's {overall_hit:.0%} is **{verdict}** that bar."
+                )
+                st.caption(
+                    "Three different numbers on this page say 'SLA' and answer three different "
+                    "questions. The first-response SLA target (minutes, sidebar) is the clock: did "
+                    "one ticket get a reply in time, yes or no. This SLA hit-rate is the scoreboard: "
+                    "of the tickets that needed a human, what percent passed that clock test. The "
+                    "'Minimum acceptable SLA hit-rate' slider is your own bar for that scoreboard "
+                    "number - it doesn't change the clock at all, it only decides how strict the "
+                    "recommendations below are about flagging an hour red. Example: 10 tickets "
+                    "needing a reply, 6 answered in time, is a 60% hit-rate for that stretch - that "
+                    "clears a 50% bar but fails a 90% one."
+                )
+
         increase_df = df[df["recommendation"] == "Increase"]
         if not increase_df.empty:
             with st.expander(f"Which {len(increase_df)} hour(s) are flagged 'Increase'"):
