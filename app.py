@@ -167,6 +167,18 @@ with tab_daily:
         df["effective_agents"] = df["actual_online"].where(df["actual_online"].notna(), df["scheduled_agents"])
         df, meta = add_recommendations(df, sla_target=sla_target_rate)
 
+        # Loaded here (rather than down by the Hour-by-hour table) so the
+        # worked_on/closed columns are also available to the "Which hours are
+        # flagged" table above - worked_on in particular helps tell a genuine
+        # coverage gap apart from an hour where agents were tied up on
+        # carryover tickets from earlier hours.
+        activity_df = load_ticket_activity_safe(start_utc, end_utc)
+        if activity_df is not None and not activity_df.empty:
+            df = df.merge(activity_df[["hour", "worked_on", "closed"]], on="hour", how="left")
+        else:
+            df["worked_on"] = pd.NA
+            df["closed"] = pd.NA
+
         if unmatched:
             with st.expander(f"{len(unmatched)} Slack poster(s) in #secret-cc-cafe couldn't be matched to a roster agent"):
                 st.write(
@@ -233,22 +245,47 @@ with tab_daily:
         increase_df = df[df["recommendation"] == "Increase"]
         if not increase_df.empty:
             with st.expander(f"Which {len(increase_df)} hour(s) are flagged 'Increase'"):
+                def _why_flagged(row) -> str:
+                    headcount_short = row["agent_gap"] > 0
+                    hit_rate_miss = pd.notna(row["sla_hit_rate"]) and row["sla_hit_rate"] < sla_target_rate
+                    if headcount_short and hit_rate_miss:
+                        return "Short-staffed + hit-rate miss"
+                    if headcount_short:
+                        return "Short-staffed"
+                    if hit_rate_miss:
+                        return "Hit-rate miss (agents were sufficient)"
+                    return "–"
+
+                increase_df = increase_df.copy()
+                increase_df["why_flagged"] = increase_df.apply(_why_flagged, axis=1)
                 increase_detail = increase_df[
-                    ["hour_label", "effective_agents", "required_agents", "agent_gap", "sla_hit_rate"]
+                    ["hour_label", "tickets", "worked_on", "effective_agents", "required_agents",
+                     "agent_gap", "sla_hit_rate", "why_flagged"]
                 ].rename(columns={
-                    "hour_label": "Hour", "effective_agents": "Effective agents",
-                    "required_agents": "Needed", "agent_gap": "Gap", "sla_hit_rate": "SLA hit-rate",
+                    "hour_label": "Hour", "tickets": "Created", "worked_on": "Worked on",
+                    "effective_agents": "Effective agents", "required_agents": "Needed",
+                    "agent_gap": "Gap", "sla_hit_rate": "SLA hit-rate", "why_flagged": "Why flagged",
                 })
+                increase_detail["Worked on"] = increase_detail["Worked on"].map(
+                    lambda x: int(x) if pd.notna(x) else "–"
+                )
                 increase_detail["SLA hit-rate"] = increase_detail["SLA hit-rate"].map(
                     lambda x: f"{x:.0%}" if pd.notna(x) else "–"
                 )
                 st.dataframe(increase_detail, width="stretch", hide_index=True)
                 st.caption(
-                    "An hour lands here for either of two reasons: effective agents came in below "
-                    "what the capacity estimate says that hour needed, or the hour's own SLA "
-                    "hit-rate missed your target above - whichever triggered first. Having enough "
-                    "(or more than enough) agents online doesn't clear an hour on its own if the "
-                    "hit-rate still came in short."
+                    "'Why flagged' spells out which of the two triggers put the hour here: "
+                    "'Short-staffed' means effective agents came in below what the capacity "
+                    "estimate says that hour needed; 'Hit-rate miss (agents were sufficient)' "
+                    "means headcount was fine but the hour's own SLA hit-rate still missed your "
+                    "target above - having enough, or more than enough, agents online doesn't "
+                    "clear an hour on its own. A hit-rate-miss hour is usually not a coverage "
+                    "problem - it points to something else (replies bunched on a few agents, a "
+                    "complexity spike, a lag before new tickets got picked up). 'Created' vs "
+                    "'Worked on' can help tell that apart: 'Worked on' counts tickets (created "
+                    "today) that got a human reply during that hour, including carryover from "
+                    "earlier hours - a 'Worked on' count much higher than 'Created' suggests "
+                    "agents were tied up clearing backlog rather than sitting idle."
                 )
 
         fig_tickets = go.Figure()
@@ -299,13 +336,6 @@ with tab_daily:
         fig_rec.update_layout(title="Staffing recommendation by hour", height=120, margin=dict(t=40, b=10),
                                plot_bgcolor="white", showlegend=False, yaxis=dict(visible=False))
         st.plotly_chart(fig_rec, width="stretch")
-
-        activity_df = load_ticket_activity_safe(start_utc, end_utc)
-        if activity_df is not None and not activity_df.empty:
-            df = df.merge(activity_df[["hour", "worked_on", "closed"]], on="hour", how="left")
-        else:
-            df["worked_on"] = pd.NA
-            df["closed"] = pd.NA
 
         st.subheader("Hour-by-hour detail")
         show = df[["hour_label", "tickets", "worked_on", "closed", "scheduled_agents", "actual_online",
