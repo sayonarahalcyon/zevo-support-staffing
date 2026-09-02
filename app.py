@@ -213,6 +213,17 @@ with tab_daily:
         st.plotly_chart(fig_tickets, width="stretch")
 
         fig_agents = go.Figure()
+        # Tickets drawn first (so it sits behind the agent series) as a light
+        # filled area on its own right-hand axis - agent headcount and ticket
+        # volume are different units, so they shouldn't share a y-axis, but
+        # seeing both on one chart makes it easy to spot "the ticket spike is
+        # why more agents were needed that hour" without cross-referencing
+        # the separate Tickets per hour chart above.
+        fig_agents.add_trace(go.Scatter(
+            x=df["hour_label"], y=df["tickets"], mode="lines", fill="tozeroy",
+            line=dict(color=style.SERIES_TICKETS, width=1),
+            fillcolor="rgba(42, 120, 214, 0.15)", name="Tickets (right axis)", yaxis="y2",
+        ))
         fig_agents.add_bar(x=df["hour_label"], y=df["scheduled_agents"], marker_color=style.SERIES_AGENTS, name="Scheduled agents")
         if df["actual_online"].notna().any():
             fig_agents.add_trace(go.Scatter(x=df["hour_label"], y=df["actual_online"], mode="lines+markers",
@@ -222,13 +233,19 @@ with tab_daily:
         fig_agents.update_layout(
             title=dict(text="Scheduled vs. actual vs. needed agents per hour", y=0.97, yanchor="top"),
             height=300, margin=dict(t=90, b=10), plot_bgcolor="white",
-            legend=dict(orientation="h", y=1.1, yanchor="bottom", x=0.5, xanchor="center"))
+            legend=dict(orientation="h", y=1.1, yanchor="bottom", x=0.5, xanchor="center"),
+            yaxis=dict(title="Agents"),
+            yaxis2=dict(title="Tickets", overlaying="y", side="right", showgrid=False, rangemode="tozero"),
+        )
         st.plotly_chart(fig_agents, width="stretch")
-        if df["actual_online"].notna().any():
-            st.caption(
-                "The recommendation strip below judges each hour against actual online agents "
-                "(Slack) where available, and the scheduled roster for any hour Slack has no data for."
-            )
+        st.caption(
+            "The light blue area is tickets that hour, on its own right-hand scale - line it up "
+            "against the agent lines to see which hours' agent gaps track a volume spike versus a "
+            "coverage gap with steady or even light ticket flow."
+            + (" The recommendation strip below judges each hour against actual online agents "
+               "(Slack) where available, and the scheduled roster for any hour Slack has no data for."
+               if df["actual_online"].notna().any() else "")
+        )
 
         rec_colors = df["recommendation"].map(style.RECOMMENDATION_COLORS)
         fig_rec = go.Figure()
