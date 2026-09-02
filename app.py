@@ -175,8 +175,12 @@ with tab_daily:
                     + ", ".join(unmatched)
                 )
 
+        tickets_total = int(df["tickets"].sum())
+        human_handled_total = int(df["human_handled"].sum())
+        fin_only_total = tickets_total - human_handled_total
+
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Tickets", int(df["tickets"].sum()))
+        c1.metric("Tickets", tickets_total)
         overall_hit = df["sla_met"].sum() / df["human_handled"].sum() if df["human_handled"].sum() else None
         c2.metric("SLA hit-rate", f"{overall_hit:.0%}" if overall_hit is not None else "n/a")
         c3.metric("Hours understaffed", int((df["recommendation"] == "Increase").sum()),
@@ -185,9 +189,23 @@ with tab_daily:
         c4.metric("Est. capacity/agent/hr", f"{meta['capacity_tickets_per_agent']:.1f}"
                    + ("" if meta["capacity_estimated_from_data"] else " (default, low data)"))
 
+        with st.expander(f"What's inside the {tickets_total} tickets?"):
+            st.write(
+                f"**{tickets_total} tickets** total today. Of those, **{fin_only_total}** were "
+                f"resolved entirely by Fin AI - no human ever replied, so there was no 15-minute "
+                f"clock to start or miss for them. The remaining **{human_handled_total}** needed "
+                f"a human reply at some point - that's the group the SLA hit-rate expander below is "
+                f"calculated from."
+            )
+            st.caption(
+                "This is why the count in the SLA hit-rate explanation below won't match the "
+                "'Tickets' number up top: Fin-only resolutions count toward ticket volume (someone "
+                "still contacted support and got helped) but are excluded from the hit-rate, since "
+                "no agent capacity was ever needed for them."
+            )
+
         if overall_hit is not None:
             with st.expander(f"What does {overall_hit:.0%} SLA hit-rate mean?"):
-                human_handled_total = int(df["human_handled"].sum())
                 sla_met_total = int(df["sla_met"].sum())
                 st.write(
                     f"Of the **{human_handled_total} tickets today that needed a human reply** "
