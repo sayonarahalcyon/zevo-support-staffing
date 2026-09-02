@@ -376,11 +376,16 @@ with tab_daily:
 with tab_trends:
     if not token:
         st.stop()
-    window = st.radio("Window", ["Last 7 days", "Last 30 days", "Last 90 days", "Custom range"],
-                       horizontal=True, index=1)
+    window = st.radio("Window", ["Yesterday", "Last 7 days", "Last 30 days", "Last 90 days", "Custom range"],
+                       horizontal=True, index=2)
 
     today_local = datetime.now(LOCAL_TZ).date()
-    if window == "Custom range":
+    if window == "Yesterday":
+        yesterday_local = today_local - timedelta(days=1)
+        start_local = datetime.combine(yesterday_local, dtime.min, tzinfo=LOCAL_TZ)
+        end_local = start_local + timedelta(days=1)
+        st.caption(f"1 day: {yesterday_local.strftime('%b %-d, %Y')} (America/Chicago).")
+    elif window == "Custom range":
         picked_range = st.date_input(
             "Pick a start and end date (inclusive) - use the same date twice for a single day",
             value=(today_local - timedelta(days=29), today_local),

@@ -84,10 +84,15 @@ at = AppTest.from_file("app.py", default_timeout=60)
 at.run()
 assert not at.exception, f"Initial run raised: {list(at.exception)}"
 
-# Switch the Trends-tab window radio to "Custom range".
+# Switch the Trends-tab window radio to "Yesterday".
 radios = [r for r in at.radio if r.label == "Window"]
 assert radios, "Could not find the Trends 'Window' radio"
 window_radio = radios[0]
+window_radio.set_value("Yesterday").run()
+assert not at.exception, f"Selecting Yesterday raised: {list(at.exception)}"
+assert any("1 day:" in c.value for c in at.caption), "Yesterday's single-day caption did not appear"
+
+# Switch the Trends-tab window radio to "Custom range".
 window_radio.set_value("Custom range").run()
 assert not at.exception, f"Selecting Custom range raised: {list(at.exception)}"
 
