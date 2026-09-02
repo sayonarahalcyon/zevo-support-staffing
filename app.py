@@ -288,58 +288,54 @@ with tab_daily:
                     "agents were tied up clearing backlog rather than sitting idle."
                 )
 
+        has_worked_on = bool(df["worked_on"].notna().any())
+
         fig_tickets = go.Figure()
-        fig_tickets.add_bar(x=df["hour_label"], y=df["tickets"], marker_color=style.SERIES_TICKETS, name="Tickets")
-        fig_tickets.update_layout(title="Tickets per hour", height=280, margin=dict(t=40, b=10),
-                                   plot_bgcolor="white", showlegend=False)
+        fig_tickets.add_bar(x=df["hour_label"], y=df["tickets"], marker_color=style.SERIES_TICKETS, name="Created")
+        if has_worked_on:
+            # Same axis, same unit (ticket count) as "Created" - a solid line
+            # with visible markers rather than a second bar, so the two are
+            # easy to tell apart at a glance without needing a second scale.
+            fig_tickets.add_trace(go.Scatter(
+                x=df["hour_label"], y=df["worked_on"], mode="lines+markers",
+                line=dict(color=style.SERIES_WORKED_ON, width=2), marker=dict(size=7),
+                name="Worked on",
+            ))
+        fig_tickets.update_layout(
+            title="Tickets per hour: created vs. worked on", height=280,
+            margin=dict(t=40, b=10), plot_bgcolor="white", showlegend=has_worked_on,
+            legend=dict(orientation="h", y=1.15, yanchor="bottom", x=0.5, xanchor="center"),
+            yaxis=dict(title="Tickets"),
+        )
         st.plotly_chart(fig_tickets, width="stretch")
+        if has_worked_on:
+            st.caption(
+                "'Worked on' counts tickets (created today) that got a human reply during that "
+                "hour, including carryover from earlier hours. When it runs well above 'Created' "
+                "for an hour, agents were busy clearing backlog rather than sitting idle - worth "
+                "checking before assuming a low hit-rate that hour means too few agents."
+            )
 
         fig_agents = go.Figure()
-        # Tickets drawn first (so it sits behind the agent series) as a light
-        # filled area on its own right-hand axis - agent headcount and ticket
-        # volume are different units, so they shouldn't share a y-axis, but
-        # seeing both on one chart makes it easy to spot "the ticket spike is
-        # why more agents were needed that hour" without cross-referencing
-        # the separate Tickets per hour chart above.
-        fig_agents.add_trace(go.Scatter(
-            x=df["hour_label"], y=df["tickets"], mode="lines", fill="tozeroy",
-            line=dict(color=style.SERIES_TICKETS, width=1),
-            fillcolor="rgba(42, 120, 214, 0.15)", name="Created (right axis)", yaxis="y2",
-        ))
-        if df["worked_on"].notna().any():
-            # Same right-hand ticket axis as "Created" above, but tickets
-            # worked on that hour (including carryover from earlier hours) -
-            # a dashed line rather than a filled area so it doesn't compete
-            # visually with the Created area it's overlaid on. This is what
-            # separates "ticket spike this hour" from "agents were tied up on
-            # backlog this hour" when an hour's agent lines alone look fine.
-            fig_agents.add_trace(go.Scatter(
-                x=df["hour_label"], y=df["worked_on"], mode="lines+markers",
-                line=dict(color=style.SEQUENTIAL_BLUE[5], dash="dash", width=2),
-                marker=dict(size=4), name="Worked on (right axis)", yaxis="y2",
-            ))
         fig_agents.add_bar(x=df["hour_label"], y=df["scheduled_agents"], marker_color=style.SERIES_AGENTS, name="Scheduled agents")
         if df["actual_online"].notna().any():
             fig_agents.add_trace(go.Scatter(x=df["hour_label"], y=df["actual_online"], mode="lines+markers",
-                                             line=dict(color=style.SERIES_ACTUAL), name="Actual online (Slack)"))
+                                             line=dict(color=style.SERIES_ACTUAL, width=2), marker=dict(size=7),
+                                             name="Actual online (Slack)"))
         fig_agents.add_trace(go.Scatter(x=df["hour_label"], y=df["required_agents"], mode="lines+markers",
-                                         line=dict(color=style.TEXT_SECONDARY, dash="dot"), name="Agents needed"))
+                                         line=dict(color=style.TEXT_SECONDARY, dash="dot", width=2),
+                                         marker=dict(size=7), name="Agents needed"))
         fig_agents.update_layout(
             title=dict(text="Scheduled vs. actual vs. needed agents per hour", y=0.97, yanchor="top"),
             height=300, margin=dict(t=90, b=10), plot_bgcolor="white",
             legend=dict(orientation="h", y=1.1, yanchor="bottom", x=0.5, xanchor="center"),
             yaxis=dict(title="Agents"),
-            yaxis2=dict(title="Tickets", overlaying="y", side="right", showgrid=False, rangemode="tozero"),
         )
         st.plotly_chart(fig_agents, width="stretch")
         st.caption(
-            "The light blue area is tickets created that hour, on its own right-hand scale - line "
-            "it up against the agent lines to see which hours' agent gaps track a volume spike "
-            "versus a coverage gap with steady or even light ticket flow."
-            + (" The dashed navy line, same right-hand axis, is tickets worked on that hour "
-               "(including carryover from earlier hours) - when it runs well above the Created "
-               "area while agent lines look adequate, that hour's issue is likely backlog, not "
-               "headcount." if df["worked_on"].notna().any() else "")
+            "Same hour labels as the ticket chart above it - line the two up to see which hours' "
+            "agent gaps track a volume spike versus a coverage gap with steady or even light "
+            "ticket flow."
             + (" The recommendation strip below judges each hour against actual online agents "
                "(Slack) where available, and the scheduled roster for any hour Slack has no data for."
                if df["actual_online"].notna().any() else "")

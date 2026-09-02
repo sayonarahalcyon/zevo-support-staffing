@@ -1,8 +1,9 @@
 """Shared color palette (validated for colorblind-safety) used across all charts."""
 
-SERIES_TICKETS = "#2a78d6"       # categorical slot 1 (blue) - ticket volume
+SERIES_TICKETS = "#2a78d6"       # categorical slot 1 (blue) - tickets created
 SERIES_AGENTS = "#1baf7a"        # categorical slot 3 (aqua) - scheduled agents
 SERIES_ACTUAL = "#eb6834"        # categorical slot 2 (orange) - actual online (from Slack)
+SERIES_WORKED_ON = "#eda100"     # categorical slot 4 (yellow) - tickets worked on
 
 SEQUENTIAL_BLUE = [
     "#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#256abf", "#184f95", "#0d366b",
