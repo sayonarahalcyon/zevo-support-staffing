@@ -185,6 +185,27 @@ with tab_daily:
         c4.metric("Est. capacity/agent/hr", f"{meta['capacity_tickets_per_agent']:.1f}"
                    + ("" if meta["capacity_estimated_from_data"] else " (default, low data)"))
 
+        increase_df = df[df["recommendation"] == "Increase"]
+        if not increase_df.empty:
+            with st.expander(f"Which {len(increase_df)} hour(s) are flagged 'Increase'"):
+                increase_detail = increase_df[
+                    ["hour_label", "effective_agents", "required_agents", "agent_gap", "sla_hit_rate"]
+                ].rename(columns={
+                    "hour_label": "Hour", "effective_agents": "Effective agents",
+                    "required_agents": "Needed", "agent_gap": "Gap", "sla_hit_rate": "SLA hit-rate",
+                })
+                increase_detail["SLA hit-rate"] = increase_detail["SLA hit-rate"].map(
+                    lambda x: f"{x:.0%}" if pd.notna(x) else "–"
+                )
+                st.dataframe(increase_detail, width="stretch", hide_index=True)
+                st.caption(
+                    "An hour lands here for either of two reasons: effective agents came in below "
+                    "what the capacity estimate says that hour needed, or the hour's own SLA "
+                    "hit-rate missed your target above - whichever triggered first. Having enough "
+                    "(or more than enough) agents online doesn't clear an hour on its own if the "
+                    "hit-rate still came in short."
+                )
+
         fig_tickets = go.Figure()
         fig_tickets.add_bar(x=df["hour_label"], y=df["tickets"], marker_color=style.SERIES_TICKETS, name="Tickets")
         fig_tickets.update_layout(title="Tickets per hour", height=280, margin=dict(t=40, b=10),
