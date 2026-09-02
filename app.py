@@ -304,8 +304,20 @@ with tab_daily:
         fig_agents.add_trace(go.Scatter(
             x=df["hour_label"], y=df["tickets"], mode="lines", fill="tozeroy",
             line=dict(color=style.SERIES_TICKETS, width=1),
-            fillcolor="rgba(42, 120, 214, 0.15)", name="Tickets (right axis)", yaxis="y2",
+            fillcolor="rgba(42, 120, 214, 0.15)", name="Created (right axis)", yaxis="y2",
         ))
+        if df["worked_on"].notna().any():
+            # Same right-hand ticket axis as "Created" above, but tickets
+            # worked on that hour (including carryover from earlier hours) -
+            # a dashed line rather than a filled area so it doesn't compete
+            # visually with the Created area it's overlaid on. This is what
+            # separates "ticket spike this hour" from "agents were tied up on
+            # backlog this hour" when an hour's agent lines alone look fine.
+            fig_agents.add_trace(go.Scatter(
+                x=df["hour_label"], y=df["worked_on"], mode="lines+markers",
+                line=dict(color=style.SEQUENTIAL_BLUE[5], dash="dash", width=2),
+                marker=dict(size=4), name="Worked on (right axis)", yaxis="y2",
+            ))
         fig_agents.add_bar(x=df["hour_label"], y=df["scheduled_agents"], marker_color=style.SERIES_AGENTS, name="Scheduled agents")
         if df["actual_online"].notna().any():
             fig_agents.add_trace(go.Scatter(x=df["hour_label"], y=df["actual_online"], mode="lines+markers",
@@ -321,9 +333,13 @@ with tab_daily:
         )
         st.plotly_chart(fig_agents, width="stretch")
         st.caption(
-            "The light blue area is tickets that hour, on its own right-hand scale - line it up "
-            "against the agent lines to see which hours' agent gaps track a volume spike versus a "
-            "coverage gap with steady or even light ticket flow."
+            "The light blue area is tickets created that hour, on its own right-hand scale - line "
+            "it up against the agent lines to see which hours' agent gaps track a volume spike "
+            "versus a coverage gap with steady or even light ticket flow."
+            + (" The dashed navy line, same right-hand axis, is tickets worked on that hour "
+               "(including carryover from earlier hours) - when it runs well above the Created "
+               "area while agent lines look adequate, that hour's issue is likely backlog, not "
+               "headcount." if df["worked_on"].notna().any() else "")
             + (" The recommendation strip below judges each hour against actual online agents "
                "(Slack) where available, and the scheduled roster for any hour Slack has no data for."
                if df["actual_online"].notna().any() else "")
