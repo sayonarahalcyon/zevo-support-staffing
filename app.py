@@ -481,10 +481,12 @@ with tab_trends:
             tdf, tmeta = add_recommendations(tdf, sla_target=sla_target_rate)
 
             # "Worked on" requires one Intercom GET per ticket created in the
-            # window (see load_ticket_activity_safe) - fine for a single day,
-            # but potentially minutes-long over 30-90 days. Cap it so a wide
-            # window doesn't hang; Created-only volume still renders either way.
-            WORKED_ON_FETCH_MAX_DAYS = 14
+            # window (see load_ticket_activity_safe) - already a ~2min wait for
+            # a single busy day on the Daily tab, and live testing of this cap
+            # at 14 days showed a 7-day window still hadn't finished after 8+
+            # minutes. Kept deliberately small so the aggregate views stay
+            # usable; Created-only volume still renders either way.
+            WORKED_ON_FETCH_MAX_DAYS = 2
             worked_on_skipped = window_days > WORKED_ON_FETCH_MAX_DAYS
             if not worked_on_skipped:
                 activity_df = load_ticket_activity_safe(start_utc, end_utc)

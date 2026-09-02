@@ -92,12 +92,11 @@ window_radio.set_value("Yesterday").run()
 assert not at.exception, f"Selecting Yesterday raised: {list(at.exception)}"
 assert any("1 day:" in c.value for c in at.caption), "Yesterday's single-day caption did not appear"
 
-# Switch to "Last 7 days" - within the 14-day cap on the expensive
-# per-ticket "Worked on" fetch, so this exercises the multi-day worked_on
-# aggregation/overlay path on the "Daily avg. scheduled vs. actual vs.
-# needed agents" chart (the single-day custom-range check below covers the
-# 1-day case; the default "Last 30 days" run above covers the skipped/capped
-# case).
+# Switch to "Last 7 days" - beyond the small cap on the expensive per-ticket
+# "Worked on" fetch, so this exercises the skipped/capped path on the "Daily
+# avg. scheduled vs. actual vs. needed agents" chart (same path the default
+# "Last 30 days" run above already covers - this just checks a second,
+# closer-to-the-cap window also skips cleanly).
 window_radio.set_value("Last 7 days").run()
 assert not at.exception, f"Selecting Last 7 days raised: {list(at.exception)}"
 
@@ -112,7 +111,16 @@ assert range_inputs, "Custom-range date_input did not appear"
 di = range_inputs[0]
 assert di.value == (TODAY_LOCAL - timedelta(days=29), TODAY_LOCAL), di.value
 
-# Now narrow it to a single specific day ("just a specific day" case).
+# Narrow it to a 2-day range - right at the "Worked on" fetch cap, so this
+# exercises the multi-day worked_on aggregation/overlay path on the "Daily
+# avg. scheduled vs. actual vs. needed agents" chart (the "Last 7 days" check
+# above covers the skipped/beyond-cap case).
+two_day_end = TODAY_LOCAL - timedelta(days=2)
+two_day_start = two_day_end - timedelta(days=1)
+di.set_value((two_day_start, two_day_end)).run()
+assert not at.exception, f"2-day custom range raised: {list(at.exception)}"
+
+# Now narrow it further to a single specific day ("just a specific day" case).
 one_day = TODAY_LOCAL - timedelta(days=2)
 di.set_value((one_day, one_day)).run()
 assert not at.exception, f"Single-day custom range raised: {list(at.exception)}"
