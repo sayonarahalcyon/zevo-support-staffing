@@ -92,6 +92,15 @@ window_radio.set_value("Yesterday").run()
 assert not at.exception, f"Selecting Yesterday raised: {list(at.exception)}"
 assert any("1 day:" in c.value for c in at.caption), "Yesterday's single-day caption did not appear"
 
+# Switch to "Last 7 days" - within the 14-day cap on the expensive
+# per-ticket "Worked on" fetch, so this exercises the multi-day worked_on
+# aggregation/overlay path on the "Daily avg. scheduled vs. actual vs.
+# needed agents" chart (the single-day custom-range check below covers the
+# 1-day case; the default "Last 30 days" run above covers the skipped/capped
+# case).
+window_radio.set_value("Last 7 days").run()
+assert not at.exception, f"Selecting Last 7 days raised: {list(at.exception)}"
+
 # Switch the Trends-tab window radio to "Custom range".
 window_radio.set_value("Custom range").run()
 assert not at.exception, f"Selecting Custom range raised: {list(at.exception)}"

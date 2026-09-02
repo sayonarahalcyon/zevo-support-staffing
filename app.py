@@ -322,6 +322,21 @@ def render_daily_view(picked_date, key_prefix: str = "daily") -> None:
         )
 
     fig_agents = go.Figure()
+    # Tickets drawn first (so they sit behind the agent series), on their own
+    # right-hand axis since agent headcount and ticket volume are different
+    # units - lets you spot "the ticket spike is why more agents were needed"
+    # right on this chart, without cross-referencing the ticket chart above.
+    fig_agents.add_trace(go.Scatter(
+        x=df["hour_label"], y=df["tickets"], mode="lines", fill="tozeroy",
+        line=dict(color=style.SERIES_TICKETS, width=1),
+        fillcolor="rgba(42, 120, 214, 0.15)", name="Created (right axis)", yaxis="y2",
+    ))
+    if has_worked_on:
+        fig_agents.add_trace(go.Scatter(
+            x=df["hour_label"], y=df["worked_on"], mode="lines+markers",
+            line=dict(color=style.SERIES_WORKED_ON, dash="dash", width=2),
+            marker=dict(size=4), name="Worked on (right axis)", yaxis="y2",
+        ))
     fig_agents.add_bar(x=df["hour_label"], y=df["scheduled_agents"], marker_color=style.SERIES_AGENTS, name="Scheduled agents")
     if df["actual_online"].notna().any():
         fig_agents.add_trace(go.Scatter(x=df["hour_label"], y=df["actual_online"], mode="lines+markers",
@@ -335,12 +350,14 @@ def render_daily_view(picked_date, key_prefix: str = "daily") -> None:
         height=300, margin=dict(t=90, b=10), plot_bgcolor="white",
         legend=dict(orientation="h", y=1.1, yanchor="bottom", x=0.5, xanchor="center"),
         yaxis=dict(title="Agents"),
+        yaxis2=dict(title="Tickets", overlaying="y", side="right", showgrid=False, rangemode="tozero"),
     )
     st.plotly_chart(fig_agents, width="stretch", key=f"{key_prefix}_agents_chart_{picked_date}")
     st.caption(
-        "Same hour labels as the ticket chart above it - line the two up to see which hours' "
-        "agent gaps track a volume spike versus a coverage gap with steady or even light "
-        "ticket flow."
+        "The light blue area is tickets created that hour (right-hand scale); the dashed yellow "
+        "line, same axis, is tickets worked on that hour (including carryover from earlier "
+        "hours) - line these up against the agent lines to see which hours' agent gaps track a "
+        "volume or backlog spike versus a coverage gap with steady or even light ticket flow."
         + (" The recommendation strip below judges each hour against actual online agents "
            "(Slack) where available, and the scheduled roster for any hour Slack has no data for."
            if df["actual_online"].notna().any() else "")
@@ -437,6 +454,7 @@ with tab_trends:
             start_local = end_local - timedelta(days=days)
 
         start_utc, end_utc = start_local.astimezone(ZoneInfo("UTC")), end_local.astimezone(ZoneInfo("UTC"))
+        window_days = (end_local - start_local).days
 
         try:
             tdf = load_hourly(token, start_utc, end_utc, int(sla_minutes * 60))
@@ -462,14 +480,36 @@ with tab_trends:
             tdf["effective_agents"] = tdf["actual_online"].where(tdf["actual_online"].notna(), tdf["scheduled_agents"])
             tdf, tmeta = add_recommendations(tdf, sla_target=sla_target_rate)
 
+            # "Worked on" requires one Intercom GET per ticket created in the
+            # window (see load_ticket_activity_safe) - fine for a single day,
+            # but potentially minutes-long over 30-90 days. Cap it so a wide
+            # window doesn't hang; Created-only volume still renders either way.
+            WORKED_ON_FETCH_MAX_DAYS = 14
+            worked_on_skipped = window_days > WORKED_ON_FETCH_MAX_DAYS
+            if not worked_on_skipped:
+                activity_df = load_ticket_activity_safe(start_utc, end_utc)
+                if activity_df is not None and not activity_df.empty:
+                    tdf = tdf.merge(activity_df[["hour", "worked_on"]], on="hour", how="left")
+                else:
+                    tdf["worked_on"] = pd.NA
+            else:
+                tdf["worked_on"] = pd.NA
+
             daily = tdf.groupby("date").agg(
                 tickets=("tickets", "sum"),
+                worked_on=("worked_on", "sum"),
                 sla_met=("sla_met", "sum"),
                 human_handled=("human_handled", "sum"),
                 understaffed_hours=("recommendation", lambda s: (s == "Increase").sum()),
                 avg_scheduled=("scheduled_agents", "mean"),
                 avg_actual=("actual_online", "mean"),
+                avg_required=("required_agents", "mean"),
             ).reset_index()
+            if worked_on_skipped:
+                # A sum() over an all-NA column still yields 0 (pandas default
+                # min_count=0), which would draw a misleading flat line at zero
+                # - force it back to NA so the overlay is simply omitted below.
+                daily["worked_on"] = pd.NA
             daily["sla_hit_rate"] = daily.apply(lambda r: r.sla_met / r.human_handled if r.human_handled else None, axis=1)
 
             fig_vol = go.Figure()
@@ -498,16 +538,52 @@ with tab_trends:
                 )
 
             if daily["avg_actual"].notna().any():
+                has_worked_on_daily = bool(daily["worked_on"].notna().any())
                 fig_staffing = go.Figure()
+                # Tickets drawn first (so they sit behind the agent series), on
+                # their own right-hand axis - same treatment as the hourly
+                # "Scheduled vs. actual vs. needed agents" chart, so the two
+                # read the same way regardless of which view you're on.
+                fig_staffing.add_trace(go.Scatter(
+                    x=daily["date"], y=daily["tickets"], mode="lines", fill="tozeroy",
+                    line=dict(color=style.SERIES_TICKETS, width=1),
+                    fillcolor="rgba(42, 120, 214, 0.15)", name="Created (right axis)", yaxis="y2",
+                ))
+                if has_worked_on_daily:
+                    fig_staffing.add_trace(go.Scatter(
+                        x=daily["date"], y=daily["worked_on"], mode="lines+markers",
+                        line=dict(color=style.SERIES_WORKED_ON, dash="dash", width=2),
+                        marker=dict(size=4), name="Worked on (right axis)", yaxis="y2",
+                    ))
                 fig_staffing.add_bar(x=daily["date"], y=daily["avg_scheduled"], marker_color=style.SERIES_AGENTS,
                                       name="Avg. scheduled")
                 fig_staffing.add_trace(go.Scatter(x=daily["date"], y=daily["avg_actual"], mode="lines+markers",
                                                    line=dict(color=style.SERIES_ACTUAL), name="Avg. actual online"))
+                fig_staffing.add_trace(go.Scatter(x=daily["date"], y=daily["avg_required"], mode="lines+markers",
+                                                   line=dict(color=style.TEXT_SECONDARY, dash="dot", width=2),
+                                                   marker=dict(size=7), name="Avg. agents needed"))
                 fig_staffing.update_layout(
-                    title=dict(text="Daily avg. scheduled vs. actual online agents", y=0.97, yanchor="top"),
-                    height=280, margin=dict(t=90, b=10), plot_bgcolor="white",
-                    legend=dict(orientation="h", y=1.1, yanchor="bottom", x=0.5, xanchor="center"))
-                st.plotly_chart(fig_staffing, width="stretch")
+                    title=dict(text="Daily avg. scheduled vs. actual vs. needed agents", y=0.97, yanchor="top"),
+                    height=300, margin=dict(t=90, b=10), plot_bgcolor="white",
+                    legend=dict(orientation="h", y=1.1, yanchor="bottom", x=0.5, xanchor="center"),
+                    yaxis=dict(title="Agents"),
+                    yaxis2=dict(title="Tickets", overlaying="y", side="right", showgrid=False, rangemode="tozero"),
+                )
+                st.plotly_chart(fig_staffing, width="stretch", key="trends_staffing_chart")
+                staffing_caption = (
+                    "The light blue area is total tickets created that day (right-hand scale)"
+                    + ("; the dashed yellow line, same axis, is tickets worked on that day "
+                       "(including carryover from earlier days)."
+                       if has_worked_on_daily else ".")
+                )
+                if worked_on_skipped:
+                    staffing_caption += (
+                        f" Tickets worked on isn't shown for windows over {WORKED_ON_FETCH_MAX_DAYS} days - it "
+                        "requires one Intercom lookup per ticket created in the window, which would be too "
+                        f"slow to load here. Pick a shorter window (or a Custom range of {WORKED_ON_FETCH_MAX_DAYS} "
+                        "days or less) to see it."
+                    )
+                st.caption(staffing_caption)
 
             st.subheader("Average ticket volume by day-of-week / hour")
             day_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
