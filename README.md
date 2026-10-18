@@ -66,7 +66,11 @@ and gives a weekly/monthly trend view.
   roster alone once Slack is configured. The roster is still shown on its
   own (the green bars, the "Scheduled" column) since the plan-vs-reality gap
   is itself useful, but it's a comparison now, not the basis for the
-  recommendation. The hour-by-hour table's **"Effective (basis)"** column
+  recommendation.
+  **Leave:** when the leave log is connected, the roster fallback is the
+  roster *minus agents on approved leave that date* (the "On leave" column), so
+  a logged vacation no longer inflates the headcount for hours Slack has no
+  data for. With no leave log configured, this is identical to before. The hour-by-hour table's **"Effective (basis)"** column
   shows exactly which number was used for each hour.
 
 ## Files
@@ -81,12 +85,22 @@ attendance.py        Reads #secret-cc-cafe on Slack and reconstructs actual
                      online/break time per agent per hour (optional data source)
 recommend.py        Capacity estimate + Increase/Sufficient/Decrease logic
 style.py            Shared chart colors
+leave.py            Pure leave logic: who is off on which dates, roster minus leave,
+                     overlap and coverage checks
+leave_store.py      Reads/writes the leave log in Supabase (adds, edits, cancels)
+forecast.py         Weekday-hour demand baseline + leave-adjusted staffing forecast
+planning_ui.py      The Forecast and Leave log screens (and the sign-in form)
+notion_backup.py    One-way copy of the leave log into a Notion database
+sync_notion.py      Nightly job that re-copies everything to Notion
+supabase/schema.sql Tables, overlap rule and change-history triggers (run once)
+.github/workflows/notion_backup.yml   Runs sync_notion.py every night
 data/roster_schedule.csv   Parsed roster (see "Updating the roster")
 requirements.txt
 .streamlit/secrets.toml.example
 smoke_test.py, apptest_check.py, attendance_smoke_test.py, recommend_test.py,
-apptest_custom_range_check.py, ticket_activity_test.py
-                     Optional offline sanity checks (no real Intercom/Slack calls)
+apptest_custom_range_check.py, ticket_activity_test.py, leave_test.py,
+apptest_leave_check.py
+                     Optional offline sanity checks (no real Intercom/Slack/Supabase/Notion calls)
 ```
 
 ## Running it locally first (optional but recommended)
@@ -176,6 +190,94 @@ at the time this app was built. If the schedule changes:
   columns `day_of_week, hour_cst, hour_ph, scheduled_agents, counted_agents, agents`.
   Only `day_of_week`, `hour_cst`, and `scheduled_agents` are actually used by
   the app; the rest is informational.
+
+## Vacation leave log and forecast
+
+Two tabs sit next to Daily staffing and Trends.
+
+**Leave log** is where approved vacation leaves are entered. Erwin, Weng and
+Kristine all sign in with their own password and have the same access (add,
+edit, cancel). Only approved leaves are logged, so every entry lowers the
+headcount. Pick an agent and the first and last day off; the screen warns, live,
+if the leave would leave fewer than N agents rostered in any hour (N is
+adjustable, default 2), and refuses an overlapping leave for the same agent.
+Cancelling keeps the record in the change history. The change history lists
+every add, edit and cancel with who and when; it is written by database
+triggers, so it cannot miss one. Signed-out viewers of the dashboard see only a
+sign-in form on this tab, and on the Forecast tab they see counts of agents on
+leave but not names.
+
+**Forecast** looks 7, 14 or 28 days ahead. Click *Build forecast* (it loads 28
+days of history, a couple of minutes the first time, cached for 30 minutes).
+For each future hour:
+
+- Expected tickets = the average (or 75th percentile at the "Busy" level) of
+  that weekday-hour over the last 28 days, times an optional volume adjustment.
+- Available agents = the roster for that hour minus rostered agents on approved
+  leave that date. Optionally scaled by typical attendance from Slack.
+- Needed agents = expected tickets / capacity per agent per hour (the same
+  estimate the rest of the app uses), rounded up. Gap = needed minus available.
+- The tab shows a day-by-day table, a date-by-hour heatmap of gaps, a one-day
+  chart, and a count of hours that are short *only because of leave* (the same
+  hour would have been fine on the roster alone).
+
+It is a planning aid. It does not model growth, holidays or incidents unless you
+set the volume adjustment, and the capacity estimate carries the same caveats as
+the rest of the app.
+
+**How leave is applied.** Dates are calendar dates in US Central time, matching
+the roster. An agent on leave for a date is removed from every hour they are
+rostered that date. A shift that runs past midnight appears in the roster as
+hours on two calendar dates (for example Sunday 6 PM to Monday 1 AM), so log
+both dates for an overnight shift.
+
+### One-time setup
+
+1. **Supabase.** In your Supabase project open *SQL Editor -> New query*, paste
+   `supabase/schema.sql`, and run it (safe to run again). Then *Project
+   Settings -> API*: copy the project URL and the secret / `service_role` key.
+   The key is used only on the server. Never commit it, and don't use the
+   browser-safe "anon" key (the tables are locked so it can't read them).
+2. **Streamlit secrets** (app -> Settings -> Secrets). Add, keeping the
+   `[LEAVE_USERS]` table at the very bottom:
+   ```toml
+   SUPABASE_URL = "https://your-project-ref.supabase.co"
+   SUPABASE_SERVICE_KEY = "your-secret-key"
+   NOTION_TOKEN = "your-notion-integration-token"
+   NOTION_LEAVE_DB_ID = "id-of-the-notion-backup-database"
+
+   [LEAVE_USERS]
+   erwin = "a-password"
+   weng = "a-password"
+   kristine = "a-password"
+   ```
+3. **Notion backup.** Create a Notion integration at notion.so/profile/integrations
+   (internal, with read, update and insert content), copy its secret into
+   `NOTION_TOKEN`, then open the backup database -> the ... menu ->
+   *Connections* and add that integration. `NOTION_LEAVE_DB_ID` is the 32
+   character ID in the database's URL (the part before `?v=`).
+4. **Nightly backup (optional but recommended).** In the GitHub repo go to
+   *Settings -> Secrets and variables -> Actions* and add the same four values
+   as repository secrets: `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`,
+   `NOTION_TOKEN`, `NOTION_LEAVE_DB_ID`. The workflow in
+   `.github/workflows/notion_backup.yml` then re-copies everything every night
+   and can be run by hand from the Actions tab. GitHub pauses scheduled
+   workflows on a repo with no activity for 60 days; running it by hand once
+   restarts the clock.
+
+Supabase is the source of truth. Each save is copied to Notion right away
+(best effort: if Notion is down the leave is still saved and the nightly job
+catches up), and Notion is one-way: editing a row there does not change the
+forecast.
+
+Everything leave-related is optional. Without the Supabase secrets the app runs
+exactly as before and the Leave log tab explains what to set up.
+
+### Note on the `streamlit_app/` folder
+
+The repo root is the live app (Streamlit's main file is `app.py`). The
+`streamlit_app/` folder is an older copy from the first build and is not used;
+it can be deleted.
 
 ## Performance note on the Trends tab
 
