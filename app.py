@@ -10,6 +10,9 @@ Data sources:
   - Actual online agents (optional): #secret-cc-cafe on Slack (live, via REST
     API) - reconstructed from login/break/back/logout messages, shown
     alongside the planned roster rather than replacing it
+  - Approved vacation leaves (optional): the Leave log tab, stored in Supabase
+    with a Notion backup. Logged leave lowers the roster headcount wherever the
+    roster is used, and drives the Forecast tab.
 """
 from __future__ import annotations
 
@@ -22,6 +25,9 @@ import streamlit as st
 from zoneinfo import ZoneInfo
 
 import attendance
+import leave as leave_mod
+import leave_store
+import planning_ui
 import roster
 import style
 from attendance import SlackAuthError
@@ -52,6 +58,41 @@ def get_slack_config() -> tuple[str | None, str]:
     the Slack attendance series is entirely optional; the app runs fine
     without it, just without the "actual online" comparison."""
     return _secret("SLACK_BOT_TOKEN"), (_secret("SLACK_CHANNEL_ID") or DEFAULT_SLACK_CHANNEL)
+
+
+def get_leave_config() -> tuple[str | None, str | None]:
+    """(supabase_url, service_key). None for either means the leave log is not
+    set up; the app then behaves exactly as it did before leave existed."""
+    return _secret("SUPABASE_URL"), _secret("SUPABASE_SERVICE_KEY")
+
+
+def get_notion_config() -> tuple[str, str] | None:
+    token, db_id = _secret("NOTION_TOKEN"), _secret("NOTION_LEAVE_DB_ID")
+    return (token, db_id) if token and db_id else None
+
+
+def get_leave_users() -> dict[str, str]:
+    """LEAVE_USERS is a table in Streamlit secrets: name = "password"."""
+    try:
+        raw = st.secrets.get("LEAVE_USERS")
+    except Exception:
+        raw = None
+    return {str(k).lower(): str(v) for k, v in dict(raw).items()} if raw else {}
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def load_leaves(url: str, key: str, include_cancelled: bool) -> list[dict]:
+    return leave_store.SupabaseLeaveStore(url, key).list_leaves(include_cancelled=include_cancelled)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def load_leave_audit(url: str, key: str) -> list[dict]:
+    return leave_store.SupabaseLeaveStore(url, key).list_audit()
+
+
+def invalidate_leaves() -> None:
+    load_leaves.clear()
+    load_leave_audit.clear()
 
 
 @st.cache_data(ttl=1800, show_spinner="Pulling conversations from Intercom...")
@@ -103,6 +144,30 @@ st.sidebar.caption(
     "hour Slack has data for, and fall back to the roster only when it doesn't - the "
     "roster isn't updated daily and misses leave, no-shows, and off-day coverage."
 )
+
+
+leave_url, leave_key = get_leave_config()
+leave_configured = bool(leave_url and leave_key)
+if leave_configured:
+    st.sidebar.success("Leave log connected (Supabase)")
+else:
+    st.sidebar.info(
+        "Leave log not configured. Add SUPABASE_URL and SUPABASE_SERVICE_KEY in Streamlit secrets to log "
+        "vacation leaves and have the forecast account for them."
+    )
+
+
+def load_leave_map() -> dict:
+    """Date -> set of agent codes on approved leave. Empty if the leave log
+    isn't configured or Supabase is unreachable - leave is an add-on, so a
+    problem there should never take down the Intercom/Slack views."""
+    if not leave_configured:
+        return {}
+    try:
+        return leave_mod.leave_by_date(load_leaves(leave_url, leave_key, False))
+    except leave_store.LeaveStoreError as e:
+        st.sidebar.warning(f"Leave log error, showing the roster without leave: {e}")
+        return {}
 
 
 def load_actual_safe(start_utc: datetime, end_utc: datetime):
@@ -169,7 +234,10 @@ def render_daily_view(picked_date, key_prefix: str = "daily") -> None:
     # it for an hour - the roster is a template that doesn't get updated
     # daily and misses leave, no-shows, or someone covering an off day.
     # Falls back to the roster only for hours with no Slack data at all.
-    df["effective_agents"] = df["actual_online"].where(df["actual_online"].notna(), df["scheduled_agents"])
+    # When the roster is the basis, logged leave comes off it: an agent on
+    # approved leave isn't covering the queue even though the template lists them.
+    df = leave_mod.annotate_hourly(df, load_leave_map())
+    df["effective_agents"] = df["actual_online"].where(df["actual_online"].notna(), df["scheduled_after_leave"])
     df, meta = add_recommendations(df, sla_target=sla_target_rate)
 
     # Loaded here (rather than down by the Hour-by-hour table) so the
@@ -372,10 +440,10 @@ def render_daily_view(picked_date, key_prefix: str = "daily") -> None:
     st.plotly_chart(fig_rec, width="stretch", key=f"{key_prefix}_rec_chart_{picked_date}")
 
     st.subheader("Hour-by-hour detail")
-    show = df[["hour_label", "tickets", "worked_on", "closed", "scheduled_agents", "actual_online",
+    show = df[["hour_label", "tickets", "worked_on", "closed", "scheduled_agents", "on_leave", "actual_online",
                 "effective_agents", "required_agents", "agent_gap", "sla_hit_rate", "recommendation"]].rename(columns={
         "hour_label": "Hour", "tickets": "Created", "worked_on": "Worked on", "closed": "Closed",
-        "scheduled_agents": "Scheduled",
+        "scheduled_agents": "Scheduled", "on_leave": "On leave",
         "actual_online": "Actual (Slack)", "effective_agents": "Effective (basis)",
         "required_agents": "Needed", "agent_gap": "Gap",
         "sla_hit_rate": "SLA hit-rate", "recommendation": "Recommendation",
@@ -391,12 +459,13 @@ def render_daily_view(picked_date, key_prefix: str = "daily") -> None:
         "automatically. Both only cover tickets created within the selected day - work done "
         "that hour on a ticket created on an earlier day won't show up here. "
         "'Effective (basis)' is whichever number the recommendation actually used for that "
-        "hour: actual online when Slack has it, the scheduled roster when it doesn't."
+        "hour: actual online when Slack has it, otherwise the scheduled roster minus 'On leave' "
+        "(rostered agents who are on approved leave that date)."
     )
 
 
 st.title("Support Staffing Dashboard")
-tab_daily, tab_trends = st.tabs(["Daily staffing", "Trends"])
+tab_daily, tab_trends, tab_forecast, tab_leave = st.tabs(["Daily staffing", "Trends", "Forecast", "Leave log"])
 
 # ------------------------------------------------------------- daily tab --
 with tab_daily:
@@ -477,7 +546,8 @@ with tab_trends:
 
             # Same precedence as the daily tab: actual online (Slack) drives the
             # recommendation when we have it for an hour, roster otherwise.
-            tdf["effective_agents"] = tdf["actual_online"].where(tdf["actual_online"].notna(), tdf["scheduled_agents"])
+            tdf = leave_mod.annotate_hourly(tdf, load_leave_map())
+            tdf["effective_agents"] = tdf["actual_online"].where(tdf["actual_online"].notna(), tdf["scheduled_after_leave"])
             tdf, tmeta = add_recommendations(tdf, sla_target=sla_target_rate)
 
             # "Worked on" requires one Intercom GET per ticket created in the
@@ -604,4 +674,38 @@ with tab_trends:
                 + ("(estimated from hours that met the SLA target in this window)."
                    if tmeta["capacity_estimated_from_data"] else
                    "(default placeholder - not enough SLA-passing hours in this window to estimate yet).")
+            )
+
+# ---------------------------------------------------------- forecast tab --
+with tab_forecast:
+    if not token:
+        st.error("The forecast needs the Intercom token (INTERCOM_ACCESS_TOKEN in Streamlit secrets).")
+    else:
+        planning_ui.render_forecast_tab(
+            load_history=lambda s_utc, e_utc: load_hourly(token, s_utc, e_utc, int(sla_minutes * 60)),
+            load_actual=load_actual_safe,
+            lmap=load_leave_map(),
+            leave_connected=leave_configured,
+            sla_target_rate=sla_target_rate,
+            slack_on=bool(slack_token),
+            show_names=bool(st.session_state.get("leave_user")),
+        )
+
+# ------------------------------------------------------------- leave tab --
+with tab_leave:
+    if not leave_configured:
+        st.info(
+            "The leave log isn't set up yet. Run supabase/schema.sql in your Supabase project, then add "
+            "SUPABASE_URL and SUPABASE_SERVICE_KEY in Streamlit secrets (see the README, 'Vacation leave log')."
+        )
+    else:
+        actor = planning_ui.login_gate(get_leave_users())
+        if actor:
+            planning_ui.render_leave_tab(
+                actor=actor,
+                store=leave_store.SupabaseLeaveStore(leave_url, leave_key),
+                notion_cfg=get_notion_config(),
+                fetch_leaves=lambda include_cancelled: load_leaves(leave_url, leave_key, include_cancelled),
+                fetch_audit=lambda: load_leave_audit(leave_url, leave_key),
+                invalidate=invalidate_leaves,
             )
